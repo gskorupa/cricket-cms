@@ -1,0 +1,9 @@
+#! /bin/sh
+
+java -Xms50m -Xmx100m -jar {{package}}.jar -r
+OUT=$?
+if [ $OUT -eq 143 ];then
+   echo "Normal exit"
+else
+   echo "Error "$OUT
+fi

@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="cricket-cms" default="all" basedir="." 
+         xmlns:if="ant:if"
+         xmlns:unless="ant:unless">
+    
+    <!-- ################################################################### -->
+    <!--                                                                     -->
+    <!-- BUILD CONFIGURATION                                                 -->
+    <!--                                                                     -->
+    <!-- Remember to modify the project name (see line 2 of this file)       -->
+    <!--                                                                     -->
+    <description>Cricket Micro Site.</description>
+    <property name="version" value="1.0.0"/> <!-- service version            -->
+    <property name="cricket-version" value="1.2.9" />
+    <property name="cricket-jar-location" value="lib/cricket-${cricket-version}.jar"/>
+    <property name="docker-repository" value="gskorupa" />
+    <property name="cricket-dev-location" value="/home/greg/workspace/Cricket"/>
+    
+    <!-- configuration of libraries included in the distribution fat-jar     -->
+    <!-- set value=false to exclude selected library                         -->
+    <property name="module-h2" value="false"/> <!-- H2 embeded database       -->
+    <property name="h2-jar-location" value="lib/h2-1.3.176.jar" />
+    <property name="module-kafka" value="false"/> <!-- Apache Kafka client    -->
+    <property name="kafka-jar-location" value="lib/kafka-clients-0.10.1.0.jar" />
+    <property name="module-saaj" value="false"/> <!-- SAAJ implementation     -->
+    <property name="saaj-jar-location" value="lib/saaj-impl-1.3.28.jar" />
+    <!--                                                                     -->
+    <!-- END OF CONFIGURATION                                                -->
+    <!-- ################################################################### -->
+
+    <!-- do not modify properties below -->
+    <property name="src" location="src/java"/>
+    <property name="src-js" location="src/js"/>
+    <property name="src-other" location="src/other"/>
+    <property name="build" location="build/classes"/>
+    <property name="dist" location="dist"/>
+    <property name="web" location="web"/>
+    <property name="lib" location="lib"/>
+    
+    <path id="project-classpath">
+        <pathelement location="${cricket-jar-location}"/>
+        <pathelement location="${h2-jar-location}"/>
+        <pathelement location="${kafka-jar-location}"/> 
+        <pathelement location="${saaj-jar-location}/"/>
+    </path>
+
+    <target name="init">
+        <!-- Create the build directory structure used by compile -->
+        <mkdir dir="${build}"/>
+    </target>
+   
+    <target name="get-dependencies" description="upload Cricket MSF library">
+        <mkdir dir="${lib}"/>
+        <get
+            src="https://github.com/gskorupa/Cricket/releases/download/${cricket-version}/cricket-${cricket-version}.jar"
+            dest="lib/cricket-${cricket-version}.jar" 
+            usetimestamp="true" 
+            ignoreerrors="true"
+        />
+        <get 
+            src="https://github.com/gskorupa/Cricket/releases/download/${cricket-version}/cricket-${cricket-version}-javadoc.jar"
+            dest="lib/cricket-${cricket-version}-javadoc.jar" 
+            usetimestamp="true" 
+            ignoreerrors="true"
+        />
+    </target>
+
+    <target name="compile" depends="init, get-dependencies" description="compile the source">
+        <!-- Compile the java code from ${src} into ${build} -->
+        <javac 
+            target="1.8" 
+            source="1.8" 
+            srcdir="${src}" 
+            destdir="${build}"
+            includeantruntime="false" 
+            debug="on"
+            classpathref="project-classpath">
+            <!--<compilerarg value="-Xlint:unchecked"/>-->
+        </javac>
+    </target>
+
+    <target name="dist" depends="clean, compile"
+            description="generate the distribution">
+        <!-- Create the distribution directory -->
+        <mkdir dir="${dist}"/>
+        <copy file="service.template" tofile="${dist}/service.sh"/>
+        <replace file="${dist}/service.sh" token="{{package}}" value="${ant.project.name}-${version}"/>
+        <antcall inheritall="true" target="jar"/>
+        <mkdir dir="${dist}/config"/>
+        <mkdir dir="${dist}/data"/>
+        <mkdir dir="${dist}/www"/>
+        <mkdir dir="${dist}/var"/>
+        <mkdir dir="${dist}/log"/>
+        <copy todir="${dist}/config" file="${src-js}/script.js"/>
+        <copy todir="${dist}/config" file="${src}/cricket.json"/>
+        <copy tofile="${dist}/data/readme.txt" file="${src-other}/readme-data.txt"/>
+        <copy todir="${dist}/www">
+            <fileset dir="www"/>
+        </copy>
+        <copy todir="${dist}" file="${src-other}/cricket-service"/>
+        <zip basedir="dist" destfile="service.zip"/>
+    </target>
+
+    <target name="clean" description="clean up">
+        <delete dir="${build}"/>
+        <delete dir="${dist}"/>
+    </target>
+    
+    <target name="jar">
+        <copy todir="${build}" overwrite="true">
+            <fileset dir="${src}" includes="*.json"/>
+            <fileset dir="${src}" includes="*.txt"/>
+        </copy>
+        <jar destfile="${dist}/${ant.project.name}-core-${version}.jar">
+            <manifest>
+                <attribute name="Main-Class" value="org.cricketmsf.Runner"/>
+            </manifest>
+            <fileset dir="${build}"/>
+            <zipfileset src="${cricket-jar-location}" excludes="**/*.json" includes="**/*"/>
+        </jar>
+        <jar destfile="${dist}/${ant.project.name}-${version}.jar">
+            <manifest>
+                <attribute name="Main-Class" value="org.cricketmsf.Runner"/>
+            </manifest>
+            <fileset dir="${build}"/>
+            <zipfileset src="${cricket-jar-location}" excludes="**/*.json" includes="**/*"/>
+            <!-- optional libraries -->
+            <zipfileset if:true="${module-h2}" src="${h2-jar-location}" includes="org/**/*"/>
+            <zipfileset if:true="${module-kafka}" src="${kafka-jar-location}" includes="org/**/*,kafka/**/*"/>
+            <zipfileset if:true="${module-saaj}" src="${saaj-jar-location}" includes="com/**/*,META-INF/services/**/*"/>
+        </jar>
+    </target>
+    
+    <target name="docker-build" depends="jar" description="create new tagged image">
+        <!-- update Dockerfile -->
+        <copy file="Dockerfile.template" tofile="Dockerfile"/>
+        <replace file="Dockerfile" token="{{version}}" value="${version}"/>
+        <exec executable="docker">
+            <arg value="build"/>
+            <arg value="-t"/>
+            <arg value="${docker-repository}/${ant.project.name}:${version}"/>
+            <arg value="."/>
+        </exec>
+    </target>
+    
+    <target name="docker-push" description="push current image to the repository">
+        <exec executable="docker">
+            <arg value="push"/>
+            <arg value="${docker-repository}/${ant.project.name}:${version}"/>
+        </exec>
+    </target>
+
+    <target name="docker-run" depends="jar" description="create and run the new container">
+        <exec executable="docker">
+            <arg value="run"/>
+            <arg value="-d"/>
+            <arg value="-p"/>
+            <arg value="127.0.0.1:8080:8080"/>
+            <arg value="-v"/>
+            <arg value="${basedir}/data:/usr/cricket/data"/>
+            <arg value="--name"/>
+            <arg value="${ant.project.name}"/>
+            <arg value="${docker-repository}/${ant.project.name}:${version}"/>
+        </exec>
+    </target>
+    
+    <target name="docker-start" depends="jar" description="start stopperd container">
+        <exec executable="docker">
+            <arg value="start"/>
+            <arg value="${ant.project.name}"/>
+        </exec>
+    </target>
+    
+    <target name="docker-stop" depends="jar" description="stop running container">
+        <exec executable="docker">
+            <arg value="stop"/>
+            <arg value="${ant.project.name}"/>
+        </exec>
+    </target>
+    
+    <target name="run" depends="dist" description="run local distribution">
+        <exec 
+            dir="${dist}"
+            executable="java">
+            <arg value="-jar"/>
+            <arg value="${ant.project.name}-${version}.jar"/>
+            <arg value="-r"/>
+        </exec>
+    </target>
+    
+    <target name="get-cricket-dev-version">
+        <delete file="${lib}/cricket-${cricket-version}.jar"/>
+        <copy file="${cricket-dev-location}/dist/cricket-${cricket-version}.jar" todir="${lib}" force="true"/>
+    </target>
+
+</project>
