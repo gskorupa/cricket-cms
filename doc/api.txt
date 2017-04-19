@@ -1,0 +1,37 @@
+1. Register new user
+
+curl -i --data "email=greg@gskorupa.com&password=test123" http://localhost:8080/api/user
+
+2. Log in
+
+a) get login:password string Base64 encoded
+
+echo g.skorupa@gmail.com:test123|base64
+
+b) send logging request (get session token)
+
+curl -i -X POST -H "Authentication: Basic Zy5za29ydXBhQGdtYWlsLmNvbTp0ZXN0MTIzCg==" http://localhost:8080/api/auth
+HTTP/1.1 200 OK
+Pragma: no-cache
+Date: Mon, 10 Apr 2017 22:12:43 GMT
+Last-modified: Tue, 11 Apr 2017 00:12:43 CEST
+Content-type: application/json; charset=UTF-8
+Content-length: 48
+
+"Zy5za29ydXBhQGdtYWlsLmNvbToxNDkxODYyMzYzMjkx"
+
+3. Get user info
+
+curl http://localhost:8080/api/user/greg@gskorupa.com
+
+4. Get users
+
+curl http://localhost:8080/user
+
+5. Check session
+Each request to "/api" path except POST to "/api/auth" and "/api/user" must have valid token added as request header X-cricket-token
+The token is checked by the dedicated request filter.
+The filter adds headers X-cricket-user (uid) and X-cricket-user-roles
+
+
+

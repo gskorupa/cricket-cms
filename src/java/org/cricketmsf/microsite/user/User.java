@@ -5,8 +5,6 @@
  */
 package org.cricketmsf.microsite.user;
 
-import java.util.HashSet;
-
 /**
  *
  * @author greg
@@ -17,7 +15,6 @@ public class User {
     public static final int OWNER = 1;
     private int type = USER;
     private String uid;
-    private String secretHash;
     private String email;
     private String role;
     private boolean confirmed;
@@ -87,20 +84,6 @@ public class User {
     }
 
     /**
-     * @return the secretHash
-     */
-    public String getSecretHash() {
-        return secretHash;
-    }
-
-    /**
-     * @param secretHash the secretHash to set
-     */
-    public void setSecretHash(String secretHash) {
-        this.secretHash = secretHash;
-    }
-
-    /**
      * @return the email
      */
     public String getEmail() {
@@ -155,9 +138,11 @@ public class User {
      */
     public void setPassword(String password) {
         this.password = HashMaker.md5Java(password);
+        //this.password = password;
     }
     
     public boolean checkPassword(String passToCheck){
+        System.out.println(getPassword()+"=="+HashMaker.md5Java(passToCheck)); //TODO: remove
         return getPassword()!=null && getPassword().equals(HashMaker.md5Java(passToCheck));
     }
 

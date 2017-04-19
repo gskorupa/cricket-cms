@@ -12,6 +12,7 @@
 
 * website
 * user manager 
+* authentication
 * content manager
 * search engine
 

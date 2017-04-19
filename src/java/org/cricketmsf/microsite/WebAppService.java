@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Grzegorz Skorupa <g.skorupa at gmail.com>.
+ * Copyright 2017 Grzegorz Skorupa <g.skorupa at gmail.com>.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,15 @@
  */
 package org.cricketmsf.microsite;
 
+import java.util.Base64;
 import org.cricketmsf.Event;
 import org.cricketmsf.Kernel;
 import org.cricketmsf.RequestObject;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Random;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import org.cricketmsf.annotation.EventHook;
 import org.cricketmsf.annotation.HttpAdapterHook;
 import org.cricketmsf.in.http.EchoHttpAdapterIface;
@@ -28,11 +32,17 @@ import org.cricketmsf.in.http.HttpAdapter;
 import org.cricketmsf.in.http.ParameterMapResult;
 import org.cricketmsf.in.http.StandardResult;
 import org.cricketmsf.in.scheduler.SchedulerIface;
-import org.cricketmsf.microsite.auth.Token;
-import org.cricketmsf.microsite.cms.CmsException;
+import org.cricketmsf.microsite.out.auth.Token;
 import org.cricketmsf.microsite.cms.CmsIface;
-import org.cricketmsf.microsite.user.HashMaker;
+import org.cricketmsf.microsite.out.auth.AuthAdapterIface;
+import org.cricketmsf.microsite.out.auth.AuthException;
+import org.cricketmsf.microsite.out.iot.ThingsDataIface;
+import org.cricketmsf.microsite.out.queue.QueueAdapterIface;
+import org.cricketmsf.microsite.out.user.UserAdapterIface;
+import org.cricketmsf.microsite.out.user.UserException;
 import org.cricketmsf.microsite.user.User;
+import org.cricketmsf.microsite.user.UserEvent;
+import org.cricketmsf.out.db.KeyValueDB;
 import org.cricketmsf.out.db.KeyValueDBException;
 import org.cricketmsf.out.db.KeyValueDBIface;
 import org.cricketmsf.out.file.FileReaderAdapterIface;
@@ -43,7 +53,7 @@ import org.cricketmsf.out.log.LoggerAdapterIface;
  *
  * @author greg
  */
-public class Service extends Kernel {
+public class WebAppService extends Kernel {
 
     // adapterClasses
     LoggerAdapterIface logAdapter = null;
@@ -52,12 +62,25 @@ public class Service extends Kernel {
     SchedulerIface scheduler = null;
     HtmlGenAdapterIface htmlAdapter = null;
     FileReaderAdapterIface fileReader = null;
+
     // optional
     // we don't need to register input adapters:
-    // UserApi
+    // UserApi, AuthApi and other input adapter if we not need to acces them directly from the service
+    //CM module
     KeyValueDBIface cmsDatabase = null;
     FileReaderAdapterIface cmsFileReader = null;
     CmsIface cms = null;
+    //user module
+    KeyValueDBIface userDatabase = null; //TODO
+    UserAdapterIface userAdapter = null;
+    //auth module
+    AuthAdapterIface authAdapter = null;
+    //event broker client
+    QueueAdapterIface queueAdapter = null;
+    KeyValueDBIface queueDB = null;
+    // IoT
+    ThingsDataIface thingsAdapter = null;
+    KeyValueDBIface thingsDB = null;
 
     @Override
     public void getAdapters() {
@@ -70,7 +93,17 @@ public class Service extends Kernel {
         fileReader = (FileReaderAdapterIface) getRegistered("FileReader");
         //cms
         cmsFileReader = (FileReaderAdapterIface) getRegistered("CmsFileReader");
-        cmsDatabase = (KeyValueDBIface) getRegistered("database");
+        cmsDatabase = (KeyValueDBIface) getRegistered("cmsDatabase");
+        //user
+        userAdapter = (UserAdapterIface) getRegistered("userAdapter");
+        //auth
+        authAdapter = (AuthAdapterIface) getRegistered("authAdapter");
+        //queue
+        queueDB = (KeyValueDBIface) getRegistered("queueDB");
+        queueAdapter = (QueueAdapterIface) getRegistered("queueAdapter");
+        //IoT
+        thingsAdapter = (ThingsDataIface) getRegistered("iotAdapter");
+        thingsDB = (KeyValueDB) getRegistered("iotDB");
     }
 
     @Override
@@ -88,21 +121,25 @@ public class Service extends Kernel {
         // USERS
         try {
             database.addTable("users", 10, true);
-            //TODO: configurable admin account
-            String newUid = HashMaker.md5Java("cricketrulez" + "@" + "g.skorupa@gmail.com");
-            String newSecret = HashMaker.md5Java("g.skorupa@gmail.com" + "@" + "cricketrulez");
+            String initialAdminEmail = (String) getProperties().getOrDefault("initial-admin-email", "");
+            String initialAdminPassword = (String) getProperties().getOrDefault("initial-admin-password", "");
+            if (initialAdminEmail.isEmpty() || initialAdminPassword.isEmpty()) {
+                handle(Event.logSevere(this.getClass().getSimpleName(), "initial-admin-email or initial-admin-secret properties not set. Stop the server now!"));
+            }
             User newUser = new User();
-            newUser.setUid(newUid);
-            newUser.setSecretHash(newSecret);
-            newUser.setEmail("g.skorupa@gmail.com");
+            //String newUid = HashMaker.md5Java(initialAdminSecret + "@" + initialAdminEmail);
+            newUser.setUid(initialAdminEmail);
+            //String newSecret = HashMaker.md5Java(initialAdminEmail + "@" + initialAdminSecret);
+            //newUser.setSecretHash(newSecret);
+            newUser.setEmail(initialAdminEmail);
             newUser.setType(User.OWNER);
             newUser.setRole("admin");
-            newUser.setPassword("test123");
+            newUser.setPassword(initialAdminPassword);
             Random r = new Random(System.currentTimeMillis());
             newUser.setConfirmString("" + r.nextLong());
-            // TODO: change when confirmation method is ready
+            // no confirmation necessary for initial admin account
             newUser.setConfirmed(true);
-            database.put("users", newUid, newUser);
+            database.put("users", newUser.getUid(), newUser);
         } catch (KeyValueDBException e) {
             handle(Event.logInfo(getClass().getSimpleName(), e.getMessage()));
         }
@@ -119,6 +156,7 @@ public class Service extends Kernel {
         }catch(CmsException e){
            //TODO: 
         }*/
+
     }
 
     @Override
@@ -198,9 +236,14 @@ public class Service extends Kernel {
         String uid = request.pathExt;
         StandardResult result = new StandardResult();
         try {
-            User u = (User) database.get("users", uid);
-            result.setData(u);
-        } catch (KeyValueDBException e) {
+            if (uid.isEmpty()) {
+                Map m = userAdapter.getAll();
+                result.setData(m);
+            } else {
+                User u = (User) userAdapter.get(uid);
+                result.setData(u);
+            }
+        } catch (UserException e) {
             result.setCode(HttpAdapter.SC_NOT_FOUND);
         }
         return result;
@@ -212,28 +255,24 @@ public class Service extends Kernel {
         //handle(Event.logFinest(this.getClass().getSimpleName(), request.pathExt));
         StandardResult result = new StandardResult();
         try {
-            String newUid = HashMaker.md5Java(event.getRequestParameter("secret") + "@" + event.getRequestParameter("email"));
-            String newSecret = HashMaker.md5Java(event.getRequestParameter("secret") + "@" + newUid);
             User newUser = new User();
-            newUser.setUid(newUid);
-            newUser.setSecretHash(newSecret);
             newUser.setEmail(event.getRequestParameter("email"));
             newUser.setType(User.USER);
             newUser.setRole("");
             newUser.setPassword(event.getRequestParameter("password"));
-            Random r = new Random(System.currentTimeMillis());
-            newUser.setConfirmString("" + r.nextLong());
-            // TODO: change when confirmation method is ready
+            newUser = userAdapter.register(newUser);
             if (((String) getProperties().getOrDefault("user-confirm", "false")).equalsIgnoreCase("true")) {
-                newUser.setConfirmed(false);
                 result.setCode(HttpAdapter.SC_ACCEPTED);
+                //fire event to send "need confirmation" email
+                handle(new UserEvent(UserEvent.USER_REGISTERED, newUser.getUid()));
             } else {
-                newUser.setConfirmed(true);
+                userAdapter.confirmRegistration(newUser.getUid());
                 result.setCode(HttpAdapter.SC_CREATED);
+                //fire event to send "welcome" email
+                handle(new UserEvent(UserEvent.USER_REG_CONFIRMED, newUser.getUid()));
             }
-            database.put("users", newUid, newUser);
             result.setData(newUser.getUid());
-        } catch (KeyValueDBException e) {
+        } catch (UserException e) {
             result.setCode(HttpAdapter.SC_BAD_REQUEST);
         }
         return result;
@@ -249,27 +288,30 @@ public class Service extends Kernel {
             return result;
         }
         try {
-            User user = (User) database.get("users", uid);
+            //User user = (User) database.get("users", uid);
+            User user = userAdapter.get(uid);
             String email = event.getRequestParameter("email");
             String type = event.getRequestParameter("type");
             String role = event.getRequestParameter("role");
             String password = event.getRequestParameter("password");
             if (email != null) {
-                user.setEmail(event.getRequestParameter("email"));
+                user.setEmail(email);
             }
-            if (type != null) {
-                user.setType(User.USER);
-            }
+            //if (type != null) {
+            //    user.setType(type);
+            //}
             if (role != null) {
-                user.setRole("");
+                user.setRole(role);
             }
             if (password != null) {
-                user.setPassword(event.getRequestParameter("password"));
+                user.setPassword(password);
             }
-            database.put("users", uid, user);
+            userAdapter.modify(user);
+            //fire event
+            handle(new UserEvent(UserEvent.USER_UPDATED, user.getUid()));
             result.setCode(HttpAdapter.SC_OK);
             result.setData(user);
-        } catch (KeyValueDBException e) {
+        } catch (UserException e) {
             result.setCode(HttpAdapter.SC_BAD_REQUEST);
         }
         return result;
@@ -291,62 +333,80 @@ public class Service extends Kernel {
             return result;
         }
         try {
-            User user = (User) database.get("users", uid);
-            user.setUnregisterRequested(true);
-            Random r = new Random(System.currentTimeMillis());
-            user.setConfirmString("" + r.nextLong());
-            //TODO: send confirmation link or remove user without confirmation - depends on config
+            userAdapter.remove(uid);
             if (((String) getProperties().getOrDefault("user-confirm", "false")).equalsIgnoreCase("true")) {
-                database.put("users", uid, user);
+                // fire event
                 result.setCode(HttpAdapter.SC_ACCEPTED);
+                handle(new UserEvent(UserEvent.USER_DEL_SHEDULED, uid));
             } else {
-                database.remove("users", uid);
+                userAdapter.confirmRemove(uid);
+                // fire event
+                handle(new UserEvent(UserEvent.USER_DELETED, uid));
                 result.setCode(HttpAdapter.SC_OK);
             }
-            result.setData(user.getUid());
-        } catch (KeyValueDBException e) {
+            result.setData(uid);
+        } catch (UserException e) {
             result.setCode(HttpAdapter.SC_BAD_REQUEST);
         }
         return result;
     }
 
-    public Token tokenGet(String tokenId) {
+    @HttpAdapterHook(adapterName = "AuthService", requestMethod = "POST")
+    public Object authLogin(Event event) {
+        StandardResult result = new StandardResult();
+        result.setCode(HttpAdapter.SC_FORBIDDEN);
+        result.setData("authorization required");
+
+        String authData = event.getRequest().headers.getFirst("Authentication");
+        handle(Event.logFine("apiLogin", "authData=" + authData));
         try {
-            Token t = (Token) database.get("tokens", tokenId);
-            return t;
-        } catch (KeyValueDBException e) {
-            handle(Event.logInfo(getClass().getSimpleName(), e.getMessage()));
-            return null;
+            String[] s = authData.split(" ");
+            if (s[0].equalsIgnoreCase("Basic")) {
+                String authPair = new String(Base64.getDecoder().decode(s[1]));
+                while (authPair.endsWith("\r") || authPair.endsWith("\n")) {
+                    authPair = authPair.substring(0, authPair.length() - 1);
+                }
+                s = authPair.split(":");
+                handle(Event.logFine("apiLogin", "authPair=" + authPair));
+                Token token = authAdapter.login(s[0], s[1]);
+                if (token != null) {
+                    result.setData(token.getToken());
+                    result.setCode(HttpAdapter.SC_OK);
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            handle(Event.logInfo(this.getClass().getSimpleName(), e.getMessage()));
         }
+        return result;
     }
 
-    public boolean tokenRemove(String tokenId) {
-        try {
-            database.remove("tokens", tokenId);
-            return true;
-        } catch (KeyValueDBException e) {
-            handle(Event.logFinest(getClass().getSimpleName(), e.getMessage()));
-            return false;
-        }
+    @HttpAdapterHook(adapterName = "AuthService", requestMethod = "DELETE")
+    public Object authLogout(Event event) {
+        RequestObject request = event.getRequest();
+        String token = request.pathExt;
+        StandardResult result = new StandardResult();
+        //TODO: invalidate token and remove from the token database
+        return result;
     }
 
-    public void tokenAdd(Token token) {
+    @HttpAdapterHook(adapterName = "AuthService", requestMethod = "GET")
+    public Object authCheck(Event event) {
+        RequestObject request = event.getRequest();
+        String tokenValue = request.pathExt;
+        StandardResult result = new StandardResult();
+        result.setCode(HttpAdapter.SC_FORBIDDEN);
         try {
-            database.put("tokens", token.getTid(), token);
-        } catch (KeyValueDBException e) {
-            handle(Event.logWarning(getClass().getSimpleName(), e.getMessage()));
+            if(authAdapter.checkToken(tokenValue)){
+                result.setCode(HttpAdapter.SC_OK);
+            }
+        } catch (AuthException ex) {
+            Kernel.handle(Event.logFine(this.getClass().getSimpleName(), ex.getMessage()));
         }
+        return result;
     }
 
-    /*
-    public void cleanTokens(long timeout) {
-        try {
-            storage.cleanTokens(timeout);
-        } catch (StorageError e) {
-            handle(Event.logWarning(getClass().getSimpleName(), e.getMessage()));
-        }
-    }
-     */
+
     @HttpAdapterHook(adapterName = "echo", requestMethod = "*")
     public Object doGetEcho(Event requestEvent) {
         return sendEcho(requestEvent.getRequest());
@@ -362,6 +422,26 @@ public class Service extends Kernel {
         logAdapter.log(event);
     }
 
+    @EventHook(eventCategory = UserEvent.CATEGORY_USER)
+    public void processUserEvent(Event event) {
+        if (event.getTimePoint() != null) {
+            scheduler.handleEvent(event);
+            return;
+        }
+        //TODO: all events should be send to the relevant queue
+        switch(event.getType()) {
+            case UserEvent.USER_DEL_SHEDULED:   //TODO: send confirmation email
+            case UserEvent.USER_DELETED:        //TODO: update user
+            case UserEvent.USER_REGISTERED:     //TODO: send confirmation email
+            case UserEvent.USER_REG_CONFIRMED:  //TODO: update user
+            case UserEvent.USER_UPDATED:
+            default:
+                handleEvent(Event.logInfo(this.getClass().getSimpleName(), "Event recived: "+event.getType()));
+                System.out.println(event.toString());
+                break;
+        }
+    }
+    
     @EventHook(eventCategory = "*")
     public void processEvent(Event event) {
         if (event.getTimePoint() != null) {

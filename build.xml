@@ -178,7 +178,7 @@
         </exec>
     </target>
     
-    <target name="run" depends="dist" description="run local distribution">
+    <target name="run" description="run local distribution">
         <exec 
             dir="${dist}"
             executable="java">

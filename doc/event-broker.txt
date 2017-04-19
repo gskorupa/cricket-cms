@@ -1,0 +1,1 @@
+Queues (paths) are created as tables in the queue database. We need to replace "/" separators with "."

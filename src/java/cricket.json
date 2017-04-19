@@ -5,15 +5,18 @@
         {
             "@type": "org.cricketmsf.config.Configuration",
             "id": "MSiteService",
-            "service": "org.cricketmsf.microsite.Service",
+            "service": "org.cricketmsf.microsite.WebAppService",
             "properties": {
                 "host": "0.0.0.0",
                 "port": "8080",
                 "threads": 0,
-                "filter": "org.cricketmsf.SecurityFilter",
+                "filter": "org.cricketmsf.microsite.auth.SecurityFilter",
                 "cors": "Access-Control-Allow-Origin:*",
                 "time-zone": "GMT",
-                "user-confirm": "false"
+                "user-confirm": "false",
+                "initial-admin-email": "g.skorupa@gmail.com",
+                "initial-admin-secret": "cricketrulez",
+                "restricted-resources": "POST@/api/user POST@/api/auth"
             },
             "adapters": {
                 "echo": {
@@ -31,6 +34,24 @@
                     "classFullName": "org.cricketmsf.microsite.in.http.UserApi",
                     "properties": {
                         "context": "/api/user",
+                        "silent-mode": "false"
+                    }
+                },
+                "AuthService": {
+                    "name": "AuthService",
+                    "interfaceName": "HttpAdapterIface",
+                    "classFullName": "org.cricketmsf.microsite.in.http.AuthApi",
+                    "properties": {
+                        "context": "/api/auth",
+                        "silent-mode": "false"
+                    }
+                },
+                "ThingsService": {
+                    "name": "ThingsService",
+                    "interfaceName": "HttpAdapterIface",
+                    "classFullName": "org.cricketmsf.microsite.in.http.ThingsApi",
+                    "properties": {
+                        "context": "/api/ttn",
                         "silent-mode": "false"
                     }
                 },
@@ -54,6 +75,24 @@
                     "properties": {
                         "path": "./data",
                         "name": "local"
+                    }
+                },
+                "queueDB": {
+                    "name": "queueDB",
+                    "interfaceName": "KeyValueDBIface",
+                    "classFullName": "org.cricketmsf.out.db.KeyValueDB",
+                    "properties": {
+                        "path": "./data",
+                        "name": "queue"
+                    }
+                },
+                "iotDB": {
+                    "name": "iotDB",
+                    "interfaceName": "KeyValueDBIface",
+                    "classFullName": "org.cricketmsf.out.db.KeyValueDB",
+                    "properties": {
+                        "path": "./data",
+                        "name": "iot"
                     }
                 },
                 "scheduler": {
@@ -83,6 +122,31 @@
                         "context": "/",
                         "use-cache": "true",
                         "page-processor": "false"
+                    }
+                },
+                "userAdapter": {
+                    "name": "userAdapter",
+                    "interfaceName": "UserAdapterIface",
+                    "classFullName": "org.cricketmsf.microsite.out.user.UserEmbededAdapter",
+                    "properties": {
+                        "helper-name": "database"
+                    }
+                },
+                "authAdapter": {
+                    "name": "authAdapter",
+                    "interfaceName": "AuthAdapterIface",
+                    "classFullName": "org.cricketmsf.microsite.out.auth.AuthEmbededAdapter",
+                    "properties": {
+                        "helper-name": "database",
+                        "helper-name-2": "userAdapter"
+                    }
+                },
+                "queueAdapter": {
+                    "name": "queueAdapter",
+                    "interfaceName": "QueueAdapterIface",
+                    "classFullName": "org.cricketmsf.microsite.out.queue.QueueEmbededAdapter",
+                    "properties": {
+                        "helper-name": "queueDB"
                     }
                 }
             }
